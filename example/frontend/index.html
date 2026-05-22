@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>docker-compose-patterns demo</title>
+  <style>
+    :root { color-scheme: dark light; }
+    body {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      max-width: 640px;
+      margin: 40px auto;
+      padding: 0 16px;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.3rem; margin-bottom: 4px; }
+    p.lede { opacity: 0.7; margin-top: 0; }
+    .counters {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 32px 0;
+    }
+    .card {
+      border: 1px solid currentColor;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .card .num {
+      font-size: 2.5rem;
+      font-weight: bold;
+      display: block;
+    }
+    .card .label { opacity: 0.7; font-size: 0.85rem; }
+    button {
+      font-family: inherit;
+      font-size: 1rem;
+      padding: 12px 24px;
+      border: 1px solid currentColor;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      border-radius: 6px;
+      width: 100%;
+    }
+    button:hover { background: currentColor; color: Canvas; }
+    pre {
+      background: rgba(127, 127, 127, 0.1);
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.8rem;
+    }
+    footer { margin-top: 32px; opacity: 0.6; font-size: 0.8rem; }
+    code { background: rgba(127, 127, 127, 0.15); padding: 1px 4px; border-radius: 3px; }
+
+    /* Indicador de polling: bolinha que pulsa */
+    .poll-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      opacity: 0.6;
+      margin-top: 8px;
+    }
+    .poll-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: currentColor;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; }
+      50%      { opacity: 1; }
+    }
+
+    /* Anima a mudança do número global quando atualiza */
+    .num.changed {
+      animation: flash 0.4s ease;
+    }
+    @keyframes flash {
+      0%   { transform: scale(1); }
+      50%  { transform: scale(1.15); color: limegreen; }
+      100% { transform: scale(1); }
+    }
+  </style>
+</head>
+<body>
+  <h1>docker-compose-patterns demo</h1>
+  <p class="lede">
+    Clique no botão. A request percorre <code>frontend → bff → backend → mongo</code>.
+    O contador "global" vem do banco (compartilhado entre todos); o "your"
+    é mantido pelo BFF em memória, associado ao seu cookie de sessão.
+  </p>
+
+  <div class="counters">
+    <div class="card">
+      <span class="num" id="global">…</span>
+      <span class="label">global counter</span>
+    </div>
+    <div class="card">
+      <span class="num" id="mine">…</span>
+      <span class="label">your counter</span>
+    </div>
+  </div>
+
+  <button onclick="increment()">Increment</button>
+
+  <div class="poll-status">
+    <span class="poll-dot"></span>
+    <span id="pollMsg">polling /api/counter/global every 2s…</span>
+  </div>
+
+  <h2 style="margin-top: 32px; font-size: 1rem;">Last full response from BFF:</h2>
+  <pre id="trace">loading…</pre>
+
+  <footer>
+    Tip: open this page in two windows side by side. Click "Increment" in one and watch
+    the other tab's "global counter" update on the next poll. The "your counter" stays
+    independent per session (cookie).
+  </footer>
+
+  <script>
+    // URL relativa: o nginx do frontend faz reverse proxy /api/* → http://bff:3000
+    // (ver frontend/nginx.conf). Browser não precisa saber a porta do BFF.
+
+    const POLL_MS = 2000;
+    let lastGlobal = null;
+
+    // load() bate na rota completa (com cookie/session). Usado no boot e no clique.
+    async function load() {
+      const r = await fetch('/api/counter');
+      const data = await r.json();
+      renderFull(data);
+    }
+
+    // increment() faz o POST e usa a resposta pra atualizar tudo.
+    async function increment() {
+      const r = await fetch('/api/counter', { method: 'POST' });
+      const data = await r.json();
+      renderFull(data);
+    }
+
+    // poll() é leve: só busca o valor global. Roda em loop a cada POLL_MS.
+    async function poll() {
+      try {
+        const r = await fetch('/api/counter/global');
+        const data = await r.json();
+        renderGlobal(data.global);
+        document.getElementById('pollMsg').textContent =
+          `polling /api/counter/global every ${POLL_MS / 1000}s · last update ${new Date(data.polledAt).toLocaleTimeString()}`;
+      } catch (e) {
+        document.getElementById('pollMsg').textContent = `poll error: ${e.message}`;
+      }
+    }
+
+    function renderGlobal(value) {
+      const el = document.getElementById('global');
+      if (lastGlobal !== null && value !== lastGlobal) {
+        el.classList.remove('changed');
+        // Força reflow pra reanimar
+        void el.offsetWidth;
+        el.classList.add('changed');
+      }
+      el.textContent = value;
+      lastGlobal = value;
+    }
+
+    function renderFull(data) {
+      renderGlobal(data.global ?? '?');
+      document.getElementById('mine').textContent = data.mine ?? '?';
+      document.getElementById('trace').textContent = JSON.stringify(data, null, 2);
+    }
+
+    // Boot: carrega tudo uma vez (com cookie), depois inicia polling do global.
+    load();
+    setInterval(poll, POLL_MS);
+  </script>
+</body>
+</html>

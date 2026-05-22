@@ -1,0 +1,123 @@
+# =====================================================================
+# docker-compose.yml — espelho local do ambiente de produção.
+#
+# Apenas `image:`, sem `build:`. Esse arquivo descreve o que rodaria
+# no orquestrador real (K8s/Swarm/ECS), que sempre puxa imagens prontas
+# do registry. A diretiva `build:` vive só no override de dev.
+#
+# Topologia:
+#   - `frontend` e `bff` expõem porta no host.
+#   - `backend` e `database` ficam invisíveis pra fora.
+#   - Network externa `catraca` permite que outros projetos enxerguem
+#     este BFF via DNS interno.
+# =====================================================================
+
+# Anchor reusável: política de log padrão (10MB × 3 = 30MB max por container).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  frontend:
+    image: ${DOCKER_REGISTRY:-localhost}/exemplo/frontend:${PROJECT_TAG:-latest}
+    ports:
+      - "${FRONTEND_PORT:-3001}:80"
+    networks:
+      - catraca
+    depends_on:
+      bff:
+        condition: service_healthy   # nginx resolve DNS no startup; bff precisa existir antes
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+    mem_limit: 64m
+
+  bff:
+    image: ${DOCKER_REGISTRY:-localhost}/exemplo/bff:${PROJECT_TAG:-latest}
+    env_file: .env
+    environment:
+      BACKEND_URL: http://backend:8080
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+    ports:
+      - "${BFF_PORT:-3000}:3000"
+    networks:
+      - internal
+      - catraca
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # node:22-alpine traz wget do BusyBox
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    mem_limit: 256m
+
+  backend:
+    image: ${DOCKER_REGISTRY:-localhost}/exemplo/backend:${PROJECT_TAG:-latest}
+    env_file: .env
+    environment:
+      DATABASE_URL: mongodb://${MONGO_USER:-root}:${MONGO_PASS:-root}@database:27017
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+    # SEM `ports:` — backend só é alcançável pelo bff (catraca/internal).
+    networks:
+      - internal
+      - catraca
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      # No fluxo do exemplo, a tag `:latest` é a imagem dev (golang-alpine
+      # com source + air), porque `docker compose build` builda target=dev
+      # via override. Alpine tem wget; usamos isso pra fazer GET no /health.
+      #
+      # Em prod REAL (imagem buildada como `scratch` via CI), trocar por:
+      #   test: ["CMD", "/server", "healthcheck"]
+      # — o binário Go expõe esse subcomando (ver cmd/server/main.go).
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s        # air leva ~10-20s pra compilar do zero
+    logging: *default-logging
+    # 512m porque o cache aponta pra imagem dev (air recompila Go a cada
+    # mudança e o compiler precisa de espaço). Em prod real (binário scratch),
+    # 64m seria suficiente — o binário Go pronto consome MB.
+    mem_limit: 512m
+
+  database:
+    image: mongo:7.0.14
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS:-root}
+      MONGO_INITDB_DATABASE: demo
+    volumes:
+      - database-data:/data/db
+      - ./database/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    networks:
+      - internal     # NUNCA na catraca — banco é privado ao projeto.
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+    mem_limit: 512m
+
+networks:
+  internal:
+  catraca:
+    external: true
+    name: catraca
+
+volumes:
+  database-data:

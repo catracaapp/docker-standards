@@ -1,0 +1,16 @@
+{
+  "name": "bff",
+  "version": "1.0.0",
+  "description": "Express BFF: handles session, calls backend with internal token",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}

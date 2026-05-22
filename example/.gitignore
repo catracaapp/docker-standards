@@ -1,0 +1,25 @@
+# Compose: override é local; default é versionado
+docker-compose.override.yml
+docker-compose.override.yml.bak.*
+
+# Env
+.env
+.env.local
+
+# Dependências
+node_modules/
+
+# Builds
+backend/tmp/
+backend/build/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+*.swo

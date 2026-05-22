@@ -1,0 +1,54 @@
+# =====================================================================
+# docker-compose.override.yml.example — template versionado para dev.
+#
+# Copie para `docker-compose.override.yml` (ignorado pelo git) via
+# `make setup` e edite à vontade pra sua máquina.
+#
+# Como funciona o merge:
+#   - `docker compose up --build` → mescla este arquivo com o principal.
+#     A diretiva `target: dev` aqui sobrescreve o build do principal, e
+#     o compose builda o stage `dev` em vez do último stage.
+#   - `docker compose -f docker-compose.yml up --build` → ignora este,
+#     compose builda o último stage do Dockerfile (= prod).
+#
+# Importante: SEMPRE use `--build` ao trocar de modo, senão o compose
+# reutiliza a imagem cacheada (que pode ter sido buildada pro outro
+# target e não funcionar).
+# =====================================================================
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: .docker/build/Dockerfile
+    volumes:
+      # Bind mount: edita index.html no host, refresh no browser, mudança aparece.
+      - ./frontend/index.html:/usr/share/nginx/html/index.html:ro
+
+  bff:
+    build:
+      context: ./bff
+      dockerfile: .docker/build/Dockerfile
+      target: dev
+    volumes:
+      - ./bff:/app
+      - /app/node_modules        # volume anônimo — preserva node_modules da imagem
+    # command: ← não precisa, o CMD do stage `dev` no Dockerfile já roda `npm run dev`
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: .docker/build/Dockerfile
+      target: dev
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"   # exposto SÓ em dev (Postman, debug, curl direto)
+    volumes:
+      - ./backend:/app
+      - /app/tmp                 # anônimo — Air escreve binários intermediários aqui
+    # command: ← idem; CMD do stage `dev` já roda `air -c .air.toml`
+
+  database:
+    # Descomente se quiser conectar via Compass/mongosh local:
+    # ports:
+    #   - "${MONGO_PORT:-27017}:27017"
+    command: mongod --bind_ip_all --wiredTigerCacheSizeGB 0.5
